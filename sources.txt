@@ -1,0 +1,21 @@
+#TOPIC,LINK
+Technology, https://www.newscientist.com/subject/technology
+Technology, https://www.nytimes.com/ca/section/technology
+Technology, https://www.bbc.com/news/technology
+Technology, https://www.theverge.com/tech
+Technology, https://www.cnet.com/tech
+Technology, https://scitechdaily.com/news/technology
+Technology, https://www.cnn.com/business/tech
+Entertainment, https://www.cnn.com/entertainment
+Entertainment, https://www.usatoday.com/entertainment
+Entertainment, https://globalnews.ca/entertainment
+Entertainment, https://ew.com
+Entertainment, https://www.cbsnews.com/entertainment
+Entertainment, https://www.eonline.com/ca
+Entertainment, https://www.bbc.com/news/entertainment_and_arts
+Lifestyle, https://globalnews.ca/tag/lifestyle
+Lifestyle, https://www.theguardian.com/us/lifeandstyle
+Lifestyle, https://www.forbes.com/lifestyle
+Lifestyle, https://www.buzzfeed.com/life
+Lifestyle, https://www.glamour.com/home
+Lifestyle, https://time.com/tag/lifestyle
