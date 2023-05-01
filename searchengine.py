@@ -1,25 +1,22 @@
 # Import libraries
+import json
 import os.path
 import pandas as pd
 import requests
 from datetime import datetime
 from bs4 import BeautifulSoup
 from hashlib import blake2b
-import justext
 from nltk.corpus import stopwords
-import warnings
+import fuzzy
 
 # nltk libraries
 from nltk.corpus import stopwords
-from nltk.corpus import wordnet
-from nltk.stem.wordnet import WordNetLemmatizer
-from nltk.stem.porter import PorterStemmer
 from nltk.tokenize import word_tokenize
 
 # Sklearn training
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.model_selection import train_test_split
 
 # Sklearn Classifiers
 from sklearn.naive_bayes import MultinomialNB
@@ -29,6 +26,7 @@ from sklearn.tree import DecisionTreeClassifier
 
 # Sklearn metrics
 from sklearn import metrics
+from sklearn.metrics.pairwise import cosine_similarity
 
 # pickle for saving the model
 import pickle
@@ -37,6 +35,18 @@ import pickle
 import matplotlib.pyplot as plt
 
 MAXDEPTH = 2
+
+# LABELS
+ENTERTAINMENT = 0
+LIFESTYLE = 1
+TECHNOLOGY = 2
+
+class printColors:
+    GREEN = '\033[92m'
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
 
 def removeStopwords(text):
     # remove stopwords from text
@@ -84,18 +94,13 @@ def scrapeURL(URL, maxdepth, topic, depth=0):
         # print("Error: Could not scrape URL: ", URL)
         return
 
-    # print("Scraping URL: ", URL)
     # Initialize the BeautifulSoup object
-    # Make warnings into errors so that we can catch them
-    warnings.filterwarnings("error")
     try:
         soup = BeautifulSoup(bytes(page.text, encoding="utf-8"), "html.parser")
-    except Exception as e: # if the page is not in HTML format try to parse it as XML
+    except Exception as e: # catch all exceptions
         print(e)
-        print("Could not parse page as HTML. Trying XML.")
-        soup = BeautifulSoup(bytes(page.text, encoding="utf-8"), "xml")
-    # Reset the warning behavior
-    warnings.resetwarnings()
+        print("Could not parse page. skipping...")
+        return
 
     # Extract all links from the page that share the same root domains
     links = soup.find_all("a", href=True)
@@ -117,18 +122,14 @@ def scrapeURL(URL, maxdepth, topic, depth=0):
             # print("Skipping URL: ", link['href'])
             continue
             
-def readSources():
-    # read the sources.txt file and return the list of links
-    with open("sources.txt", "r") as f:
-        links = f.readlines()
-    return links
-
 def collectDocuments():
     # crawl each link in sources.txt
     if(not os.path.isfile("sources.txt")):
         raise("sources.txt not found.")
     
-    links = readSources()
+    # read the sources.txt file and return the list of links
+    with open("sources.txt", "r") as f:
+        links = f.readlines()
 
     for link in links:
         if(link[0] == "#"):
@@ -139,31 +140,178 @@ def collectDocuments():
         topic = topic.strip()
         print("Scraping URL: ", URL)
         scrapeURL(URL, MAXDEPTH, topic)
-    # For Crawling, if the page is not available crawl it. For availability, you can check hash value of URL and its existence in related subfolder
-    # update crawl.log file <topic, link’s URL, Hash value of URL, date>
-    # only crawl pages that have the same root domain as the seed URL
-    return
-
-def findEmptyFiles():
-    empty = 0
-    total = 0
-    for directory in os.listdir("data"):
-        for file in os.listdir(f"data/{directory}"):
-            with open(f"data/{directory}/{file}", "r", encoding="utf-8") as f:
-                text = f.read()
-                if(len(text) == 0):
-                    print(f"data/{directory}/{file}")
-                    empty += 1
-                total += 1
-    print(empty / total * 100, "% of the documents are empty.")
     return
 
 def indexDocuments():
-    findEmptyFiles()
+
+    index = {}
+    soundex = fuzzy.Soundex(4)
+
+    # For each topic we chose,,
+    for category in os.listdir("data"):
+
+        # Go into each file in one topic at a time
+        if(os.listdir(f"data/{category}") == []):
+            continue
+        for filename in os.listdir(f"data/{category}"):
+
+            # If the file is the .gitIgnore, continue
+            if filename[0] == ".":
+                continue
+
+            # Open file and read the article into a string
+            with open(f"data/{category}/{filename}", "r", encoding="utf-8") as f:
+                article = f.read()
+
+            # Create hash of the article
+            h = filename.split('.')[0]
+
+            # Tokenize the article
+            tokenized = word_tokenize(article)
+            
+            # For each token in the article..
+            for token in tokenized:
+                if ("|" in token):
+                    continue 
+                # lowercase the token
+                token = token.lower()
+                    # See if the token exists in the index 
+                if(token in index.keys()):
+                    # If the token does exist, increment the frequency
+                    # of the token in this specific article 
+                    if(h in index[token][1].keys()):
+                        index[token][1][h][0] += 1
+                    # If the hash does not exist, add it to the dictionary
+                    else:
+                        index[token][1][h] = [1, category]
+                # If the token does not exist, add it to the dictionary
+                else:
+                    index[token] = [soundex(token.encode('utf-8')), {h: [1, category]}]
+        
+    if(index == {}):
+        print("Error: No documents to index. Please run Collect new documnets first.")
+        return
+
+
+    # Open text file to write inverted index
+    with open("invertedindex.txt", "w", encoding="utf-8") as inverted:
+        inverted.write("Term | Soundex | Appearances {Hash, [Frequency, Topic]}\n")
+
+        # For each term, write the information down,, ig
+        for term in index:
+            inverted.write(f"{term} | {index[term][0]} | {json.dumps(index[term][1])}\n")
+    # json.dump(index, open("index.json", "w", encoding="utf-8"), indent=4, sort_keys=True)
     return
-    
+
+def readInvertedIndex():
+    # read the inverted index from the file
+    index = {}
+    with open("invertedindex.txt", "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    for line in lines[1:]:
+        term, soundex, appearances = line.split("|")
+        term = term.strip()
+        soundex = soundex.strip()
+        appearances = appearances.strip()
+        documents = json.loads(appearances)
+        index[term] = [soundex, documents]
+    return index
+
+def getLevenshteinDistance(suggestion, error):
+    # possible operations: insertion, deletion, substitution (transposition is not considered)
+    # insertion: add a letter (e.g. "cat" -> "cats" thus difference in length)
+    # deletion: remove a letter (e.g. "cats" -> "cat" thus difference in length)
+    # substitution: replace a letter (e.g. "cat" -> "cut" iterates through both words and finds each difference)
+
+    distance = abs(len(suggestion)-len(error)) # initialize with difference in length
+    # find the minimum length of the two words
+    if len(suggestion) < len(error): 
+        minlength = len(suggestion)
+    else:
+        minlength = len(error)
+    # iterate through both words until we reach the end of one, for each difference found add 1 to the distance
+    for i in range(minlength):
+        if suggestion[i] != error[i]:
+            distance += 1
+    return distance # return the distance
+
+def findBestWord(word, index):
+    # find all terms that have the same soundex code as the word
+    soundex = fuzzy.Soundex(4)
+    wordSoundex = soundex(word)
+    matches = []
+    for term in index:
+        if(index[term][0] == wordSoundex):
+            matches.append(term)
+    # get lowest levenshtein distance between the word and the matches
+    if(len(matches) == 0): # if no matches are found, find lowest levenshtein distance between the word and all terms
+        matches = list(index.keys())
+    bestWord = matches[0]
+    minimumDistance = getLevenshteinDistance(matches[0], word)
+    for i in range(1, len(matches)):
+        distance = getLevenshteinDistance(matches[i], word)
+        if(distance < minimumDistance):
+            bestWord = matches[i]
+            minimumDistance = distance
+        
+    return bestWord
+
 def searchForQuery():
     # user given prompt to enter query
+    query = input("Enter your query: ").lower()
+    terms = query.split(" ")
+    # read the inverted index from the file
+    try:
+        index = readInvertedIndex()
+    except FileNotFoundError:
+        print("Index not found, try Index documents first.")
+        return
+    # json.dump(index, open("index.json", "w", encoding="utf-8"), indent=4, sort_keys=True)
+    # index = json.load(open("index.json", "r", encoding="utf-8"))
+    # For each word, if the word is not within inverted index terms, replace wrong word the best word using Soundex code. Now, you have a query that all words are available in the index.
+    for i in range(len(terms)):
+        if(terms[i] not in index):
+            print(f"Term {printColors.BOLD}{terms[i]}{printColors.ENDC} not found in index, finding replacement...")
+            # find the best word using soundex
+            best = findBestWord(terms[i], index)
+            print(f"Replacing {printColors.BOLD}{terms[i]}{printColors.ENDC} with {printColors.BOLD}{best}{printColors.ENDC}")
+            terms[i] = best
+    # find the all documents that contain the query terms
+    documents = [(document, index[term][1][document][1]) for term in terms for document in index[term][1]]
+    # vectorize documents and query using tfidf
+    query = " ".join(terms)
+    print(f"\nSearching for query: {printColors.BOLD}{query}{printColors.ENDC}")
+    tfidfVec = TfidfVectorizer(lowercase=True, ngram_range = (1,1))
+    similarities = []
+    for document in documents:
+        with open(f"data/{document[1]}/{document[0]}.txt", "r", encoding="utf-8") as f:
+            text = f.read()
+        vecDoc = tfidfVec.fit_transform([text]).toarray()
+        vecQuery = tfidfVec.transform([query]).toarray()
+        # calculate the cosine similarity of the documents
+        similarities.append(cosine_similarity(vecDoc, vecQuery)[0][0])
+
+    # print the top 3 most related documents
+    print(f"\n{printColors.BOLD}Top 3 most related documents:{printColors.ENDC}")
+    for i in range(3):
+        if(len(similarities) == 0):
+            print(f"{printColors.RED}There are no more documents that are similar to the query.{printColors.ENDC}")
+            break
+        maxIndex = similarities.index(max(similarities))
+        # highlight query terms in your output using another color.
+        with open(f"data/{documents[maxIndex][1]}/{documents[maxIndex][0]}.txt", "r", encoding="utf-8") as f:
+            text = f.read()
+        for term in terms:
+            words = text.split(" ")
+            words = [word.lower() for word in words]
+            for j in range(len(words)):
+                if(words[j] == term):
+                    words[j] = "\033[1;31;40m" + words[j] + "\033[0m"
+            text = " ".join(words)
+        print(f"\n{printColors.BOLD}#{i+1}: Document <{documents[maxIndex][0]}.txt, {documents[maxIndex][1]}> : {round(similarities[maxIndex]*100, 2)}% Cosine similarity.{printColors.ENDC}\n")
+        print(text)
+        similarities.remove(similarities[maxIndex])
+    print()
     return
 
 def readDataset():
@@ -174,6 +322,8 @@ def readDataset():
         print("Reading directory: ", directory, "...")
         for filename in os.listdir(f"data/{directory}"):
             entry = {}
+            if(filename[0] == '.'):
+                continue
             with open(f"data/{directory}/{filename}", 'r', encoding="utf-8") as f:
                 for line in f:
                     if(line == "\n"):
@@ -181,11 +331,11 @@ def readDataset():
                     entry['text'] = line
                     entry['topic'] = filename
                     if(directory == "Entertainment"):
-                        entry['label'] = 0
+                        entry['label'] = ENTERTAINMENT
                     elif(directory == "Lifestyle"):
-                        entry['label'] = 1
+                        entry['label'] = LIFESTYLE
                     elif(directory == "Technology"):
-                        entry['label'] = 2
+                        entry['label'] = TECHNOLOGY
                     entry["tokens"] = word_tokenize(entry['text'])
                     entry['token-count'] = len(entry['tokens'])
                     dataset = pd.concat([dataset, pd.DataFrame([entry])], ignore_index=True) # add the entry to the dataset dataframe
@@ -223,13 +373,12 @@ def trainMLClassifier(dataset, datasetTokens, model, classifier):
     if(classifier == "naive-bayes"):
         clf = MultinomialNB()
     elif(classifier == "svm"):
-        clf = SVC(kernel='linear')
+        clf = SVC(kernel='linear', probability=True)
     elif(classifier == "decision-tree"):
         clf = DecisionTreeClassifier()
     else:
         # if no other classifier is specified, we must be using k-nearest neighbors
         n = int(''.join(c for c in classifier if c.isdigit())) # get the value of k from the argument by removing all non-digit characters
-        print("Using k-nearest neighbors with k = " + str(n))
         clf = KNeighborsClassifier(n_neighbors=n)
 
     # train the model
@@ -258,9 +407,6 @@ def trainMLClassifier(dataset, datasetTokens, model, classifier):
     return accuracy, recall, precision, fScore
 
 def predictLink(URL):
-    # user given prompt to enter a link
-    # scape the link's text using jusText, trafilatura
-    # predict the topic of the link content using the trained classifier
     try:
         page = requests.get(URL)
     except Exception as e:
@@ -269,24 +415,24 @@ def predictLink(URL):
     if(page.status_code != 200):
         print("Error: Could not scrape URL: ", URL, " with status code: ", page.status_code)
         return
-    # Make warnings into errors so that we can catch them
-    warnings.filterwarnings("error")
     try:
         soup = BeautifulSoup(bytes(page.text, encoding="utf-8"), "html.parser")
     except Exception as e: # if the page is not in HTML format try to parse it as XML
         print(e)
-        print("Could not parse page as HTML. Trying XML.")
-        soup = BeautifulSoup(bytes(page.text, encoding="utf-8"), "xml")
-    # Reset the warning behavior
-    warnings.resetwarnings()
+        print("Could not parse page, returning...")
+        return
     # get the text from the page
     content = getContentFromSoup(soup)
 
     # get the vectorizer and classifier
-    with open("ML-Models/vectorizer.model", 'rb') as f:
-        vectorizer = pickle.load(f)
-    with open("ML-Models/classifier.model", 'rb') as f:
-        classifier = pickle.load(f)
+    try:
+        with open("ML-Models/vectorizer.model", 'rb') as f:
+            vectorizer = pickle.load(f)
+        with open("ML-Models/classifier.model", 'rb') as f:
+            classifier = pickle.load(f)
+    except FileNotFoundError:
+        print("Error: Could not find vectorizer or classifier model files. Please run Train ML classifier first.")
+        return
 
     # vectorize the text
     vectorizedContent = vectorizer.transform([content]).toarray()
@@ -294,18 +440,21 @@ def predictLink(URL):
     # predict the topic of the link
     prediction = classifier.predict(vectorizedContent)
     confidence = classifier.predict_proba(vectorizedContent)
-    if(prediction == 0):
+    if(prediction == ENTERTAINMENT):
         topic = "Entertainment"
-    elif(prediction == 1):
+    elif(prediction == LIFESTYLE):
         topic = "Lifestyle"
-    elif(prediction == 2):
+    elif(prediction == TECHNOLOGY):
         topic = "Technology"
-    print(f"Predicted topic: <{topic}, %{round(confidence[0][prediction[0]]*100, 2)}>")
-    return prediction[0]
+    if(confidence[0][prediction[0]] < 0.5):
+        print(f"{printColors.RED}Predicted topic: <{topic}, {round((1-confidence[0][prediction[0]])*100, 2)}%>{printColors.ENDC}")
+    elif(confidence[0][prediction[0]] > 0.9):
+        print(f"{printColors.GREEN}Predicted topic: <{topic}, {round(confidence[0][prediction[0]]*100, 2)}%>{printColors.ENDC}")
+    else:
+        print(f"{printColors.YELLOW}Predicted topic: <{topic}, {round(confidence[0][prediction[0]]*100, 2)}%>{printColors.ENDC}")
 
-def yourStory():
-    # read the story from story.txt
-    return
+
+    return prediction[0]
 
 if __name__ == "__main__":
     # get input from user
@@ -317,8 +466,7 @@ if __name__ == "__main__":
         print("\t3 - Search for a query.")
         print("\t4 - Train ML classifier.")
         print("\t5 - Predict a link.")
-        print("\t6 - Your story!")
-        print("\t7 - Quit.")
+        print("\t6 - Quit.")
         print()
         
         num = input("Enter your choice: ")
@@ -330,63 +478,23 @@ if __name__ == "__main__":
             print("Indexing documents...")
             indexDocuments()
         elif(num == '3'):
-            print("Searching for a query...")
             searchForQuery()
         elif(num == '4'):
-            print("Training ML classifier...")
-            print("Enter the vectorizer to use: ")
-            print("\t1 - Bag of words.")
-            print("\t2 - TF-IDF.")
-            print()
-            vec = input("Enter your choice: ")
-
-            print("Enter the classifier to use: ")
-            print("\t1 - Naive Bayes.")
-            print("\t2 - SVM.")
-            print("\t3 - Decision Tree.")
-            print("\t4 - K-Nearest Neighbors.")
-            print()
-            clf = input("Enter your choice: ")
-
-            if(vec == '1'):
-                vec = "bag-of-words"
-            else:
-                vec = "tfidf"
-            
-            if(clf == '1'):
-                clf = "naive-bayes"
-            elif(clf == '2'):
-                clf = "svm"
-            elif(clf == '3'):
-                clf = "decision-tree"
-            else:
-                print("Enter the value of k for k-nearest neighbors: ")
-                k = input("Enter your choice: ")
-                clf = "k-nearest-neighbors-" + k
+            vec = "tfidf"
+            clf = "svm"
             print("Training ML classifier with " + vec + " vectorizer and " + clf + " classifier.")
             print("Reading dataset...")
             dataset, datasetTokens = readDataset()
+            if(dataset.empty):
+                print("Error: Dataset is empty. Please run Collect new documents first.")
+                continue
             print("Training ML classifier...")
             scores = trainMLClassifier(dataset, datasetTokens, vec, clf)
-            print("dumping dataset to csv.")
-            dataset.to_csv("ML-Scores/dataset.csv", index=False)
-            print("Dumping model scores to csv.")
-            if(os.path.exists("ML-Scores/scores.csv")):
-                df = pd.read_csv("scores.csv")
-            else:
-                df = pd.DataFrame(columns=["classifier", "model", "accuracy", "recall", "precision", "f1"])
-            # concat the new scores to the dataframe
-            df = pd.concat([df, pd.DataFrame([[clf, vec, scores[0], scores[1], scores[2], scores[3]]], columns=["classifier", "model", "accuracy", "recall", "precision", "f1"])])
-            # write the dataframe to the csv
-            df.to_csv("ML-Scores/scores.csv", index=False)
         elif(num == '5'):
             link = input("Enter the link to predict: ")
             print(f"Predicting topic of {link}...")
             predictLink(link)
         elif(num == '6'):
-            print("Your story...")
-            yourStory()
-        elif(num == '7'):
             print("Quitting...")
             break
         else:
