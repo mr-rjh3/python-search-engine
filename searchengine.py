@@ -86,7 +86,7 @@ def scrapeURL(URL, maxdepth, topic, depth=0):
         return
     
     # Write to the log file
-    with open("crawler1.log", "a") as f:
+    with open("crawler.log", "a") as f:
         # <topic, link’s URL, Hash value of URL, date>
         f.write(f"<{topic}, {URL}, {H}, {datetime.now()}, {page.status_code}>\n")
     
