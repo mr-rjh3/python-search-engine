@@ -66,7 +66,9 @@ Enter your choice:
 
 - Quit will simply exit the program.
 
+## License
 
+This project is under license from MIT. For more details, see the [LICENSE](LICENSE) file.
 
 
 
